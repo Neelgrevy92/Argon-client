@@ -2,7 +2,7 @@
 
 Argon is a Python-based chat client built for the **I2P SAM protocol** using **i2pd** as the underlying router.  
 It allows encrypted peer-to-peer communication over the I2P network, focusing on simplicity, security, and modular design.
-
+Windows only for now
 ---
 
 ## Features
