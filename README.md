@@ -17,7 +17,14 @@ It allows encrypted peer-to-peer communication over the I2P network, focusing on
 
 ## Installation
 
-### 1. Install dependencies
+### 3. from the release
+check the release tab and pick the latest version
+
+### 2. From github
+clone the repo 
+```bash
+git clone https://github.com/Neelgrevy92/Argon-client
+```
 
 Install dependencies
 ```bash
@@ -28,7 +35,9 @@ Run the Client, it will setup and install the i2pd c++ router
 python Argon_messenger.py
 ```
 
-### 2. Main Menu options
+## Fonctionnalities 
+
+### 1. Main Menu options
 
 ```bash
 1 - Join room      |   v - Vault       |
