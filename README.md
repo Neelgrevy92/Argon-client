@@ -17,7 +17,7 @@ It allows encrypted peer-to-peer communication over the I2P network, focusing on
 
 ## Installation
 
-### 3. from the release
+### 1. from the release
 check the release tab and pick the latest version
 
 ### 2. From github
