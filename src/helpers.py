@@ -2,6 +2,15 @@ from colorama import Fore, Style, init
 init(autoreset=True)
 import csv
 import configparser
+import subprocess
+from pgpy import PGPKey, PGPMessage
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from argon2.low_level import hash_secret_raw, Type
+import os
+import getpass
+import warnings
+from cryptography.utils import CryptographyDeprecationWarning
+
 
 SETTINGS_FILE = "./settings.ini"
 
@@ -95,4 +104,5 @@ def handle_missing_main_alias(private_key, public_key):
     if not public_key:
         print(Fore.RED + "Missing public key with alias 'main'")
     
+
     print(Fore.YELLOW + "Please select keys manually or create a keypair with alias 'main'")
