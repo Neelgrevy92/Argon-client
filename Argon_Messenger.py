@@ -16,6 +16,11 @@ import getpass
 import sys
 
 
+from src.browser import registry_to_file
+from src.website_helper import *
+
+
+
 from src.keychain import cli_keychain
 from src.settings import setting_cli
 from src.settings import i2p_health
@@ -43,15 +48,15 @@ title = r"""____________________________________________________________________
             /____/                                           
 ________________________________________________________________________________________________________________________
 
-Version : 1.0.1   -h health -i general info
+Version : 1.0.2   -h health -i general info
 ________________________________________________________________________________________________________________________
 
 """
 
 menu = """                               
-                                        |   1 - Join room     |   v - Vault       |
-                                        |   2 - Create room   |   x - Settings    |
-                                        |   3 - Keychain      |   q - Quit        |
+                                        |   1 - Join room     |   4 - web       |
+                                        |   2 - Create room   |   v - Vault     |
+                                        |   3 - Keychain      |   x - Settings  |
 
 """
 
@@ -164,7 +169,7 @@ def main():
                     os.makedirs(os.path.dirname(dest_file), exist_ok=True)
                     argon_protect(filepath, dest_file)
                     os.remove(filepath)  # delete the old .asc after protection
-                    print("[INFO] - Make sure to bind your Privatekey to an alias in the Vault (v)!")
+                    print("[INFO] - Make sure to bind your Privatekey to an alias in the keypair manager (3)!")
             elif file.lower().endswith('.bin'):
                 print(f'[WARNING] - Misplaced encrypted privatekey? {file} move to ==> ./Keychain/private')
                 dest = os.path.join('./Keychain/private', file)
@@ -411,6 +416,22 @@ def main():
         if choice == "h":
             i2p_health()
 
+
+        if choice == '4':
+            print("1 - browse internet")
+            print("2 - Host website")
+            print('3 - Download safely i2p registery')
+            
+            choice = input('choose')
+
+            if choice=="3":
+                pass
+                #registry_to_file("./storage/i2p_registery.csv")
+            if choice=="2":
+                host_website()
+                input()
+
+            input()
         if choice == "i":
             guide()
 

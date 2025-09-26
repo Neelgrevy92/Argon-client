@@ -216,9 +216,6 @@ def i2p_health():
             for line in lines:
                 print(line)
 
-            print("----TUNNEL INFO-----")
-            print('SOON')
-
 
             print(Fore.YELLOW + f"\nRefreshing in {REFRESH_INTERVAL}s... Press ENTER to exit." + Style.RESET_ALL)
             for _ in range(REFRESH_INTERVAL):
@@ -264,6 +261,11 @@ ________________________________________________________________________________
 
     while True:
         display_settings(config)
+
+        print("________________________________________________________________________________________________________________________")
+        print("Commands : 1 - Run peer test 2 - Reload tunnels configuration 3 - Decline transit tunnels 4 - Start graceful shutdown 5 - Force shutdown ")
+        print("________________________________________________________________________________________________________________________")
+
         try:
             choice = input(Fore.CYAN + ">>> " + Style.RESET_ALL).strip()
         except (KeyboardInterrupt, EOFError):

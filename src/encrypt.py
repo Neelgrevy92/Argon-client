@@ -1,11 +1,16 @@
-from pgpy import PGPKey, PGPMessage
+from pgpy import PGPKey, PGPMessage, PGPUID
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from argon2.low_level import hash_secret_raw, Type
 import os
 import getpass
 import warnings
 from cryptography.utils import CryptographyDeprecationWarning
+from pgpy.constants import PubKeyAlgorithm, KeyFlags, HashAlgorithm, SymmetricKeyAlgorithm, CompressionAlgorithm
+from colorama import Fore, Back, Style
+from colorama import init
 
+
+from datetime import datetime
 
 
 warnings.filterwarnings("ignore", category=CryptographyDeprecationWarning)
@@ -122,3 +127,60 @@ def argon_protect(private_key_file, output_file):
         f.write(salt + nonce + encrypted_key)
 
     print(f"AES encyrpted PGP key in {output_file}")
+
+
+
+
+
+# ----- nouvelle version de generate_keypair (utilise PRIVATE_DIR / PUBLIC_DIR) -----
+def generate_keypair(name: str, email: str):
+    PUBLIC_DIR = "./Keychain/public"
+    PRIVATE_DIR = "./Keychain/private"
+
+    """
+    Génère une paire PGP (clé privée non protégée) et écrit :
+     - public  -> PUBLIC_DIR/<email>_public_<ts>.asc
+     - private -> PRIVATE_DIR/<email>_private_<ts>.asc
+
+    Retourne (private_key_obj, public_key_obj, private_path, public_path)
+    """
+    # crée les dossiers si nécessaire (les constantes PRIVATE_DIR / PUBLIC_DIR sont définies en haut du fichier)
+    os.makedirs(PUBLIC_DIR, exist_ok=True)
+    os.makedirs(PRIVATE_DIR, exist_ok=True)
+
+    # Génération simple : RSA 2048
+    primary = PGPKey.new(PubKeyAlgorithm.RSAEncryptOrSign, 2048)
+    subkey = PGPKey.new(PubKeyAlgorithm.RSAEncryptOrSign, 2048)
+
+    uid = PGPUID.new(name, email=email)
+
+    primary.add_uid(
+        uid,
+        usage={KeyFlags.Sign, KeyFlags.Certify},
+        hashes=[HashAlgorithm.SHA256, HashAlgorithm.SHA512],
+        ciphers=[SymmetricKeyAlgorithm.AES256],
+        compression=[CompressionAlgorithm.ZLIB, CompressionAlgorithm.BZ2, CompressionAlgorithm.ZIP]
+    )
+
+    primary.add_subkey(subkey, usage={KeyFlags.EncryptCommunications, KeyFlags.EncryptStorage})
+
+    # noms de fichiers basés sur l'email + timestamp pour éviter collisions
+    safe_email = email.replace("@", "_at_").replace(".", "_")
+    ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    private_filename = f"{safe_email}_private_{ts}.asc"
+    public_filename = f"{safe_email}_public_{ts}.asc"
+
+    private_path = os.path.join(PRIVATE_DIR, private_filename)
+    public_path = os.path.join(PUBLIC_DIR, public_filename)
+
+    # écrire fichiers ASCII-armored
+    with open(private_path, "w", encoding="utf-8") as f:
+        f.write(str(primary))
+
+    with open(public_path, "w", encoding="utf-8") as f:
+        f.write(str(primary.pubkey))
+
+    print(Fore.GREEN + f"PRIVKEY written : {private_path}")
+    print(Fore.GREEN + f"PUBKEY written : {public_path}")
+
+    return primary, primary.pubkey, private_path, public_path
