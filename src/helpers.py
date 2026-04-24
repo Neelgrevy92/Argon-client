@@ -101,3 +101,15 @@ def handle_missing_main_alias(private_key, public_key):
         print(Fore.RED + "Missing public key with alias 'main'")
     
     print(Fore.YELLOW + "Please select keys manually or create a keypair with alias 'main'")
+
+def clear_screen():
+    """Clear the terminal screen in a cross-platform way"""
+    os.system('cls' if os.name == 'nt' else 'clear')
+
+def set_terminal_title(title):
+    """Set the terminal title in a cross-platform way"""
+    if os.name == 'nt':
+        os.system(f'title {title}')
+    else:
+        # standard ANSI escape sequence for setting terminal title
+        print(f'\033]0;{title}\007', end='', flush=True)

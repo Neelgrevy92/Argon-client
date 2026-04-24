@@ -145,8 +145,11 @@ def chat_session(sock):
 
 def run_server():
     """Create session and accept incoming users"""
-    os.system('cls')
-    os.system('title ARGON UNENCRYPTED COMMUNICATION')
+    os.system('cls' if os.name == 'nt' else 'clear')
+    if os.name == 'nt':
+        os.system('title ARGON UNENCRYPTED COMMUNICATION')
+    else:
+        print('\033]0;ARGON UNENCRYPTED COMMUNICATION\007', end='', flush=True)
 
     try:
 
@@ -159,7 +162,7 @@ def run_server():
         sam_create_session(s, main_session_id, priv)
         print(Fore.GREEN + "[SUCESS] Destination generated ! Copy the key and give it to your contact (Dont hesitate to encrypt the DEST)")
         time.sleep(1)
-        os.system("cls")
+        os.system('cls' if os.name == 'nt' else 'clear')
         header = Fore.CYAN + rf"""DEST____________________________________________________________________________________________________________________
 
 {pub}
@@ -176,8 +179,11 @@ ________________________________________________________________________________
         print(f"server error : {e}")
 
 def run_client():
-    os.system('cls')
-    os.system('title ARGON UNENCRYPTED COMMUNICATION')
+    os.system('cls' if os.name == 'nt' else 'clear')
+    if os.name == 'nt':
+        os.system('title ARGON UNENCRYPTED COMMUNICATION')
+    else:
+        print('\033]0;ARGON UNENCRYPTED COMMUNICATION\007', end='', flush=True)
     """Workflow to connect to an existing DEST"""
     try:
         print(Fore.CYAN + "Please Enter the DEST in base32 format of your contact.")

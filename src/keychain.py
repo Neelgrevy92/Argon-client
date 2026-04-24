@@ -1,9 +1,11 @@
+"""
+src/keychain.py - PGP Keychain management with TUI interface
+"""
 from colorama import Fore, Style, init
 import os
 import csv
-from .encrypt import * 
-import re 
-
+from .encrypt import *
+import re
 
 init(autoreset=True)
 
@@ -30,8 +32,9 @@ def verify_register_integrity():
             removed.append(e)
 
     if removed:
+        from .tui import render_warning
         for e in removed:
-            print(Fore.RED + f" - ID {e['ID']} ({e['Type']}) -> missing file {e['Filename']}" + Style.RESET_ALL)
+            render_warning(f"Orphan entry removed: ID {e['ID']} ({e['Type']}) → {e['Filename']}")
         save_register(cleaned_entries)
 
     return cleaned_entries
@@ -103,6 +106,7 @@ def sync_keys_with_files():
 
 def delete_key(entries, key_id, remove_file=True):
     """Delete a key from register, optionally remove the file too."""
+    from .tui import render_success, render_warning
     for e in entries:
         if e["ID"] == key_id:
             if remove_file:
@@ -111,97 +115,88 @@ def delete_key(entries, key_id, remove_file=True):
                     os.remove(path)
             entries.remove(e)
             save_register(entries)
-            print(Fore.RED + f"[✓] Key {key_id} deleted." + Style.RESET_ALL)
+            render_success(f"Key {key_id} deleted")
             return
-    print(Fore.YELLOW + f"[!] ID {key_id} not found." + Style.RESET_ALL)
+    render_warning(f"ID {key_id} not found")
 
 
 def bind_alias(entries, key_id, alias):
     """Bind an alias to a key (1 public + 1 private max per alias)."""
+    from .tui import render_success, render_warning
     for e in entries:
         if e["ID"] == key_id:
             # Prevent alias conflicts
             same_alias = [x for x in entries if x["Alias"] == alias]
             if any(x["Type"] == e["Type"] for x in same_alias):
-                print(Fore.YELLOW + f"[!] Alias '{alias}' already bound to a {e['Type']} key." + Style.RESET_ALL)
+                render_warning(f"Alias '{alias}' already bound to a {e['Type']} key")
                 return
             e["Alias"] = alias
             save_register(entries)
-            print(Fore.GREEN + f"[✓] Key {key_id} bound to alias '{alias}'." + Style.RESET_ALL)
+            render_success(f"Key {key_id} bound to alias '{alias}'")
             return
-    print(Fore.YELLOW + f"[!] ID {key_id} not found." + Style.RESET_ALL)
+    render_warning(f"ID {key_id} not found")
 
-
-
-def print_table(entries):
-    """Pretty print private and public keys side by side."""
-    private_keys = [e for e in entries if e["Type"] == "private"]
-    public_keys = [e for e in entries if e["Type"] == "public"]
-
-    print(Fore.CYAN + "PRIVATE KEYS".ljust(60) + " | " + "PUBLIC KEYS")
-    print(Fore.CYAN + "-" * 120)
-
-    max_len = max(len(private_keys), len(public_keys))
-    for i in range(max_len):
-        left = ""
-        right = ""
-
-        if i < len(private_keys):
-            e = private_keys[i]
-            alias = e["Alias"] if e["Alias"] else Fore.YELLOW + "(no alias)"
-            filename = clean_filename(e["Filename"])
-            left = f"[{e['ID']}] {alias} - {filename}"
-
-        if i < len(public_keys):
-            e = public_keys[i]
-            alias = e["Alias"] if e["Alias"] else "(no alias)"
-            filename = clean_filename(e["Filename"])
-            right = f"[{e['ID']}] {alias} - {filename}"
-
-        print(left.ljust(60) + " | " + right)
-
-    print(Fore.CYAN + "-" * 120)
 
 def cli_keychain():
     """Main interactive loop for keychain management."""
+    from .tui import (
+        console, render_keychain_table, render_info_panel,
+        render_success, render_error, render_warning, render_info,
+        wait_for_enter, text_prompt, ACCENT, CYAN, INQUIRER_STYLE
+    )
+    from .helpers import clear_screen, set_terminal_title
+    from InquirerPy import inquirer
+    from InquirerPy.separator import Separator
+
     ensure_register_exists()
     sync_keys_with_files()
 
     try:
         while True:
-            os.system("cls" if os.name == "nt" else "clear")
+            clear_screen()
+            set_terminal_title("Argon · Keychain")
 
-            # Header & commands menu
-            header = r"""________________________________________________________________________________________________________________________
-
-Argon Client Keychain - Manage your PGP keys |  If you use main alias it will be used by default 
-________________________________________________________________________________________________________________________
-            """
-            print(Fore.CYAN + header)
-            print("[i] - All the private keys are safely encrypted.")
-            print("gen : generate a new keypair")
-            print("d [ID]: delete a key with its ID (remove file + csv)")
-            print("r [ID]: remove a key with its ID (only from csv, keep file)")
-            print("b [ID] [NAME]: bind the key to a specific name (max 1 pub + 1 priv per alias)")
-            print("q: quit keychain and return to main menu\n")
+            console.print()
+            render_info_panel(
+                "Keychain Manager",
+                "[bold]Manage your PGP keys and aliases[/]\n\n"
+                "[dim]Keys with alias [bold]'main'[/bold] are used by default when joining/creating rooms[/dim]"
+            )
+            console.print()
 
             # Refresh register and cleanup
             entries = verify_register_integrity()
-            print_table(entries)
+            render_keychain_table()
+            console.print()
 
-            # Read user command
-            cmd = input(Fore.CYAN + ">>> " + Style.RESET_ALL).strip().split()
-            if not cmd:
-                continue
+            # Menu
+            choices = [
+                {"name": "  Generate new keypair", "value": "gen"},
+                {"name": "  Bind alias to a key", "value": "bind"},
+                {"name": "  Delete a key (file + registry)", "value": "delete"},
+                {"name": "  Remove from registry only", "value": "remove"},
+                Separator(),
+                {"name": "  <- Back to main menu", "value": "quit"},
+            ]
 
-            if cmd[0] in ["exit", "quit", "q"]:
-                print(Fore.GREEN + "[INFO] Returning to main menu..." + Style.RESET_ALL)
+            action = inquirer.select(
+                message="",
+                choices=choices,
+                pointer=">",
+                qmark="",
+                amark="",
+                instruction="(arrows to navigate, Enter to select)",
+                style=INQUIRER_STYLE,
+            ).execute()
+
+            if action == "quit":
+                render_info("Returning to main menu...")
                 break
 
-            elif cmd[0] == "gen":
+            elif action == "gen":
                 try:
-                    choice = input("Enter <Name> <Email>: ").strip()
-                    name, mail = choice.split()
+                    name = text_prompt("Name for the keypair", qmark=">")
+                    mail = text_prompt("Email for the keypair", qmark=">")
 
                     # Generate keypair
                     priv_obj, pub_obj, priv_path, pub_path = generate_keypair(name, mail)
@@ -222,29 +217,29 @@ ________________________________________________________________________________
                     entries.append({"ID": str(new_pub_id), "Type": "public", "Filename": pub_filename, "Alias": ""})
                     save_register(entries)
 
-                    print(Fore.GREEN + f"[SUCCESS] Keypair registered: private ID {new_priv_id}, public ID {new_pub_id}" + Style.RESET_ALL)
-                    input("Press Enter to continue...")
+                    render_success(f"Keypair generated: private ID {new_priv_id}, public ID {new_pub_id}")
+                    wait_for_enter()
 
-                except ValueError:
-                    print(Fore.YELLOW + "Please enter: <Name> <email> (separated by space)." + Style.RESET_ALL)
-                    input("Press Enter to continue...")
                 except Exception as e:
-                    print(Fore.RED + f"[ERROR] key generation failed: {e}" + Style.RESET_ALL)
-                    input("Press Enter to continue...")
+                    render_error(f"Key generation failed: {e}")
+                    wait_for_enter()
 
-            elif cmd[0] == "d" and len(cmd) == 2:
-                delete_key(entries, cmd[1], remove_file=True)
+            elif action == "bind":
+                key_id = text_prompt("Key ID to bind", qmark=">")
+                alias = text_prompt("Alias name (e.g. 'main')", qmark=">")
+                bind_alias(entries, key_id, alias)
+                wait_for_enter()
 
-            elif cmd[0] == "r" and len(cmd) == 2:
-                delete_key(entries, cmd[1], remove_file=False)
+            elif action == "delete":
+                key_id = text_prompt("Key ID to delete", qmark=">")
+                delete_key(entries, key_id, remove_file=True)
+                wait_for_enter()
 
-            elif cmd[0] == "b" and len(cmd) >= 3:
-                bind_alias(entries, cmd[1], " ".join(cmd[2:]))
-
-            else:
-                print(Fore.YELLOW + "[!] Unknown command." + Style.RESET_ALL)
-                input("Press Enter to continue...")
+            elif action == "remove":
+                key_id = text_prompt("Key ID to remove from registry", qmark=">")
+                delete_key(entries, key_id, remove_file=False)
+                wait_for_enter()
 
     except KeyboardInterrupt:
-        print("\n" + Fore.GREEN + "[INFO] CTRL+C detected, returning to main menu..." + Style.RESET_ALL)
+        render_info("Returning to main menu...")
         return

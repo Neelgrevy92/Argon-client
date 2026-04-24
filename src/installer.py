@@ -7,6 +7,7 @@ import re
 import zipfile
 import io
 import time
+import shutil
 from colorama import Fore, Style, init
 init(autoreset=True)
 
@@ -69,7 +70,7 @@ def install_from_github(architecture):
         download_response.raise_for_status()
         
         # Where to download ?
-        download_path = os.path.join("..", windows_asset['name'])
+        download_path = os.path.join(".", windows_asset['name'])
         
         # Progression bar 
         total_size = int(download_response.headers.get('content-length', 0))
@@ -90,7 +91,7 @@ def install_from_github(architecture):
         if download_path.endswith('.zip'):
             print("[INFO] - Extracting ZIP file...")
             with zipfile.ZipFile(download_path, 'r') as zip_ref:
-                zip_ref.extractall("..")
+                zip_ref.extractall(".")
             print("[INFO] - Extraction completed")
             
             # delete the zip
@@ -108,6 +109,9 @@ def install_from_github(architecture):
         return False
     except Exception as e:
         print(Fore.RED + f"[ERROR] - Installation failed: {e}")
+        if "Errno 22" in str(e) or "FileNotFound" in str(e) or "Permission" in str(e):
+            print(Fore.YELLOW + "[WARNING] - This error is often caused by Windows Defender or your Antivirus deleting/blocking the i2pd download.")
+            print(Fore.YELLOW + "Please add an exclusion for the Argon folder in Windows Security, or install manually.")
         show_manual_instructions(architecture, "latest")
         input("Press Enter to continue...")
         return False
@@ -138,22 +142,37 @@ def check_router(root_dir="."):
     router_found = False
     router_path = None
     
+    if os.name != 'nt':
+        if shutil.which('i2pd'):
+            print(Fore.GREEN + "[INFO] - Router found in system PATH (Linux/macOS)")
+            return True
+
     for file in os.listdir(root_dir):
         filepath = os.path.join(root_dir, file)
-        if (os.path.isfile(filepath) and 
-            "i2pd" in file.lower() and 
-            file.lower().endswith(".exe")):
+        if os.path.isfile(filepath) and "i2pd" in file.lower():
+            if os.name == 'nt' and not file.lower().endswith(".exe"):
+                continue
             print(Fore.GREEN + f"[INFO] - Router found: {file}")
             router_found = True
             router_path = filepath
             break
     
     if not router_found:
-        os.system("title I2PD SETUP - MISSING EXECUTABLE")
+        if os.name == 'nt':
+            os.system("title I2PD SETUP - MISSING EXECUTABLE")
+        else:
+            print('\033]0;I2PD SETUP - MISSING EXECUTABLE\007', end='', flush=True)
+
         print(Fore.YELLOW + "[WARNING] - No i2pd router found in this directory.")
         response = input("Would you like to autoinstall? (Y/N): ")
         
         if response.lower() in ['y', 'yes']:
+            if os.name != 'nt':
+                print(Fore.YELLOW + "[INFO] - On Linux/macOS, please install i2pd via your package manager.")
+                print(Fore.YELLOW + "Example: sudo apt install i2pd")
+                input("Press Enter to continue...")
+                return False
+
             architecture = "64" if sys.maxsize > 2**32 else "32"
             print(f"[INFO] - Installing i2pd for x{architecture} architecture")
             success = install_from_github(architecture)

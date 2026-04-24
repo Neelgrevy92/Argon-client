@@ -12,6 +12,8 @@ from pgpy import PGPKey, PGPMessage
 import datetime
 import sys
 import select
+from .helpers import clear_screen, set_terminal_title
+from .tui import render_dest_display, render_chat_header, render_success, render_info, render_error, console, wait_for_enter
 
 SAM_HOST = "127.0.0.1"
 SAM_PORT = 7656
@@ -179,41 +181,165 @@ def recv_framed_message(sock):
     data = recv_exact(sock, length)
     return data
 
+# ----------------- Chat input with Ctrl+Q menu ─────────────────
+def _chat_input(prompt):
+    """
+    Custom character-by-character input that intercepts Ctrl+Q.
+    Returns the typed string on Enter, or None when Ctrl+Q is pressed.
+    """
+    sys.stdout.write(prompt)
+    sys.stdout.flush()
+    chars = []
+
+    if os.name == 'nt':
+        import msvcrt
+        while True:
+            ch = msvcrt.getwch()
+            if ch == '\x11':          # Ctrl+Q
+                sys.stdout.write('\n')
+                sys.stdout.flush()
+                return None
+            elif ch == '\r':          # Enter
+                sys.stdout.write('\n')
+                sys.stdout.flush()
+                return ''.join(chars)
+            elif ch == '\x08':        # Backspace
+                if chars:
+                    chars.pop()
+                    sys.stdout.write('\b \b')
+                    sys.stdout.flush()
+            elif ch == '\x03':        # Ctrl+C
+                raise KeyboardInterrupt
+            elif ch in ('\x00', '\xe0'):  # special keys (arrows etc)
+                msvcrt.getwch()       # consume second byte
+            else:
+                chars.append(ch)
+                sys.stdout.write(ch)
+                sys.stdout.flush()
+    else:
+        import tty, termios
+        fd = sys.stdin.fileno()
+        old = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd)
+            while True:
+                ch = sys.stdin.read(1)
+                if ch == '\x11':      # Ctrl+Q
+                    sys.stdout.write('\r\n')
+                    sys.stdout.flush()
+                    return None
+                elif ch in ('\r', '\n'):
+                    sys.stdout.write('\r\n')
+                    sys.stdout.flush()
+                    return ''.join(chars)
+                elif ch in ('\x7f', '\x08'):  # Backspace
+                    if chars:
+                        chars.pop()
+                        sys.stdout.write('\b \b')
+                        sys.stdout.flush()
+                elif ch == '\x03':    # Ctrl+C
+                    raise KeyboardInterrupt
+                elif ch == '\x1b':    # Escape sequence
+                    sys.stdin.read(2)
+                else:
+                    chars.append(ch)
+                    sys.stdout.write(ch)
+                    sys.stdout.flush()
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+def show_chat_menu():
+    """In-chat action menu triggered by Ctrl+Q"""
+    from InquirerPy import inquirer
+    from InquirerPy.separator import Separator
+    from .tui import INQUIRER_STYLE
+
+    choices = [
+        {"name": "  Send audio message", "value": "audio"},
+        {"name": "  Send file", "value": "file"},
+        Separator(),
+        {"name": "  <- Back to chat", "value": "cancel"},
+    ]
+
+    action = inquirer.select(
+        message="Action",
+        choices=choices,
+        pointer=">",
+        qmark=">>",
+        instruction="(arrows to navigate, Enter to select)",
+        style=INQUIRER_STYLE,
+    ).execute()
+
+    return action
+
+
 # ----------------- Chat -----------------
 def chat_session(sock, private_key_file, pubkey_remote):
-    print(Fore.YELLOW + "[INFO] Acessing the encrypted PRIVKEY.." + Style.RESET_ALL)
+    render_info("Accessing encrypted PRIVKEY...")
 
     # Decrypt the private key once per session
     try:
         private_key = decrypt_private_key(private_key_file)
         #If the Argon2 password is correct we can use the privatekey.
-        print(Fore.GREEN + "[INFO] Private Key sucessfully unlocked.\n" + Style.RESET_ALL)
+        render_success("Private Key successfully unlocked")
     except Exception as e:
-        print(Fore.RED + f"[ERREUR] Unable to decrypt PRIVATE KEY: {e}" + Style.RESET_ALL)
+        render_error(f"Unable to decrypt PRIVATE KEY: {e}")
         return
 
     # reception thread using the framing logic
     def receive():
+        peer_connected = False
         while True:
-            length_bytes = sock.recv(4)
-            length = int.from_bytes(length_bytes, "big")
-            payload = sock.recv(length)
             try:
+                length_bytes = sock.recv(4)
+                if not length_bytes or len(length_bytes) < 4:
+                    render_info("Connection closed by remote")
+                    break
+                length = int.from_bytes(length_bytes, "big")
+                if length <= 0 or length > 1_000_000:  # sanity check
+                    continue
+                payload = recv_exact(sock, length)
+                if not payload:
+                    render_info("Connection closed by remote")
+                    break
+
                 try:
                     clear_text = pgp_decrypt_message(private_key, payload)
                     timestamp = time.strftime("%H:%M:%S")
                     print(Fore.MAGENTA + f"\r[{timestamp}] Remote: {clear_text}\n" + Fore.CYAN + "You: ", end='')
-                except Exception as e:
-                    print(Fore.GREEN + f"\nuser 2 connected" + Style.RESET_ALL) #the first SAM handshake cant be PGP ARMORED
+                except Exception:
+                    # First failed decrypt = SAM handshake, show connected once
+                    if not peer_connected:
+                        peer_connected = True
+                        render_success("Peer connected")
+                    # Subsequent failed decrypts are silently ignored
+                    # (own messages echoed back, malformed data, etc.)
+
+            except (ConnectionResetError, ConnectionAbortedError, OSError):
+                render_info("Connection lost")
+                break
             except Exception as e:
                 print(Fore.RED + f"\n[Reception error: {e}]" + Style.RESET_ALL)
                 break
 
     threading.Thread(target=receive, daemon=True).start()
 
+    render_chat_header(True)
     try:
         while True:
-            msg = input(Fore.CYAN + "You: " + Style.RESET_ALL)
+            msg = _chat_input("\033[96mYou: \033[0m")
+
+            if msg is None:
+                # Ctrl+Q was pressed -> show action menu
+                action = show_chat_menu()
+                if action == "audio":
+                    render_info("Audio message: not yet implemented")
+                elif action == "file":
+                    render_info("File transfer: not yet implemented")
+                # "cancel" -> back to chat
+                continue
+
             if not msg:
                 continue
             # Encrypt the message before sending
@@ -223,7 +349,6 @@ def chat_session(sock, private_key_file, pubkey_remote):
                     armored_bytes = armored.encode('utf-8')
                 else:
                     armored_bytes = bytes(armored)
-                #print(Fore.YELLOW + f"[DEBUG] encrypted message size: {len(armored_bytes)} bytes" + Style.RESET_ALL)
 
                 # Send framed message (4 bytes length + payload)
                 send_framed_message(sock, armored_bytes)
@@ -232,7 +357,7 @@ def chat_session(sock, private_key_file, pubkey_remote):
                 break
 
     except (KeyboardInterrupt, BrokenPipeError, OSError):
-        print(Fore.YELLOW + "\n[Chat is over]" + Style.RESET_ALL)
+        render_info("Chat session ended")
     finally:
         try:
             sock.close()
@@ -240,59 +365,112 @@ def chat_session(sock, private_key_file, pubkey_remote):
             pass
 
 # ----------------- Room functions -----------------
+
+# ----------------- Room functions -----------------
 def join_room(pubkey_remote_file, private_key_file):
-    """Join an exisiting I2P Destination encrypted workflow """
+    """Join an existing I2P Destination — invite-aware encrypted workflow"""
+    from .invites import check_dynamic_invites, load_address_book
+    from .tui import text_prompt, INQUIRER_STYLE
+    from InquirerPy import inquirer
+    from InquirerPy.separator import Separator
+    import gc
 
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    public_path = os.path.join(base_dir, "Keychain", "public", pubkey_remote_file)
+    public_path  = os.path.join(base_dir, "Keychain", "public",  pubkey_remote_file)
     private_path = os.path.join(base_dir, "Keychain", "private", private_key_file)
 
-    print(f"[DEBUG] Looking for public key at: {public_path}")
-    print(f"[DEBUG] Looking for private key at: {private_path}")
-
     if not os.path.isfile(public_path):
-        print(f"[ERROR] Public key not found: {public_path}")
-        input('')
+        render_error(f"Public key not found: {public_path}")
         return
     if not os.path.isfile(private_path):
-        print(f"[ERROR] Private key not found: {private_path}")
-        input('')
+        render_error(f"Private key not found: {private_path}")
         return
 
     try:
         with open(public_path, 'r') as f:
-            pubkey_remote_content = f.read()
-            pubkey_remote = PGPKey.from_blob(pubkey_remote_content)[0]
-        #print('extraction suceeded')
-        os.system('cls')
+            pubkey_remote = PGPKey.from_blob(f.read())[0]
 
-        time.sleep(0.1)
-        print(Fore.YELLOW + "Enter the target DEST :" + Style.RESET_ALL)
-        dest_pub = input().strip()
+        clear_screen()
 
-        client_session_id = "client_" + generate_random_id(6)
+        # ── Step 1: decrypt private key once (needed for invite parsing)
+        from .encrypt import decrypt_private_key
+        render_info("Unlocking private key for invite verification...")
+        try:
+            priv_key_obj = decrypt_private_key(private_path)
+        except Exception as e:
+            render_error(f"Failed to unlock private key: {e}")
+            return
 
-        # Create local transient session
-        s1 = sam_hello()
-        pub, priv = sam_dest_generate(s1)
-        sam_create_session(s1, client_session_id, priv)
+        # ── Step 2: Scan dynamic invites ─────────────────────────────
+        dest_ba = check_dynamic_invites(priv_key_obj)
 
-        # New socket for the stream connect (this socket becomes the data pipe)
-        s2 = sam_hello()
-        sam_stream_connect(s2, client_session_id, dest_pub)
+        # ── Step 3: Fallback menu if no dynamic invite was accepted ──
+        if dest_ba is None:
+            choices = [
+                {"name": "  Paste DEST manually", "value": "paste"},
+                {"name": "  Address Book (saved contacts)", "value": "book"},
+                Separator(),
+                {"name": "  <- Cancel", "value": "cancel"},
+            ]
+            action = inquirer.select(
+                message="How do you want to connect?",
+                choices=choices,
+                pointer=">",
+                qmark=">>",
+                instruction="(arrows to navigate, Enter to select)",
+                style=INQUIRER_STYLE,
+            ).execute()
 
-        print(Fore.GREEN + "[CONNECTED] - You can start chatting ! " + Style.RESET_ALL)
+            if action == "cancel":
+                render_info("Join cancelled.")
+                return
+
+            elif action == "paste":
+                raw = text_prompt("Enter the target I2P Destination", qmark=">").strip()
+                if not raw:
+                    render_error("No destination entered.")
+                    return
+                dest_ba = bytearray(raw.encode("utf-8"))
+
+            elif action == "book":
+                dest_ba = load_address_book(priv_key_obj)
+                if dest_ba is None:
+                    render_info("No contact selected.")
+                    return
+
+        # ── Step 4: Connect using DEST from bytearray ─────────────────
+        try:
+            dest_str = dest_ba.decode("utf-8")
+
+            client_session_id = "client_" + generate_random_id(6)
+
+            s1 = sam_hello()
+            pub, priv = sam_dest_generate(s1)
+            sam_create_session(s1, client_session_id, priv)
+
+            s2 = sam_hello()
+            sam_stream_connect(s2, client_session_id, dest_str)
+
+            render_success("Connected! You can start chatting")
+
+        finally:
+            # Wipe DEST from memory regardless of what happens
+            dest_ba[:] = b'\x00' * len(dest_ba)
+            del dest_ba, dest_str
+            gc.collect()
+
         chat_session(s2, private_path, pubkey_remote)
 
     except Exception as e:
-        print(Fore.RED + f"Error while joining room: {e}" + Style.RESET_ALL)
+        render_error(f"Error joining room: {e}")
         import traceback
         traceback.print_exc()
+
 
 def create_room(private_key_file, pubkey_remote_file):
     """Create session and accept incoming users ==> encrypted workflow"""
     time.sleep(1)
-    os.system("cls")
+    clear_screen()
     
     #looking for the private and public keys passed 
     try:
@@ -313,34 +491,111 @@ def create_room(private_key_file, pubkey_remote_file):
             pubkey_remote_content = f.read()
             pubkey_remote = PGPKey.from_blob(pubkey_remote_content)[0]
 
+        from InquirerPy import inquirer
+        from .tui import INQUIRER_STYLE
+        from .encrypt import decrypt_private_key
+        
+        room_type = inquirer.select(
+            message="Room Type:",
+            choices=[
+                {"name": "  Dynamic Room (Disposable / Burn-after-reading)", "value": "dynamic"},
+                {"name": "  Static Room (Persistent Identity / Address Book)", "value": "static"}
+            ],
+            pointer=">",
+            qmark=">>",
+            style=INQUIRER_STYLE
+        ).execute()
 
         main_session_id = "host_" + generate_random_id(6)
-        print("[INFO] - CREATING ROOM for id : " + main_session_id)
+        render_info(f"Creating room for session: {main_session_id}")
 
-        # Create I2P session & get transient dest
-        s = sam_hello()
-        pub, priv = sam_dest_generate(s)
-        sam_create_session(s, main_session_id, priv)
+        priv_key_obj = None
 
-        print("[SUCESS] Destination generated ! Copy the key and give it to your contact (Dont hesitate to encrypt the DEST)")
-        time.sleep(1)
-        os.system("cls")
-        header = Fore.CYAN + rf"""DEST____________________________________________________________________________________________________________________
+        if room_type == "static":
+            from .i2p_identity import get_or_create_static_i2p_dest
+            render_info("Unlocking private key to access static identity...")
+            priv_key_obj = decrypt_private_key(private_path)
+            
+            from .keychain import load_register
+            entries = load_register()
+            alias = "Host"
+            for e in entries:
+                if e["Type"] == "private" and e["Filename"] == private_key_file:
+                    alias = e["Alias"] or "Host"
+                    break
+            
+            pub, priv = get_or_create_static_i2p_dest(priv_key_obj, priv_key_obj.pubkey, alias)
+            
+            s = sam_hello()
+            sam_create_session(s, main_session_id, priv)
+        else:
+            s = sam_hello()
+            pub, priv = sam_dest_generate(s)
+            sam_create_session(s, main_session_id, priv)
 
-{pub}
-________________________________________________________________________________________________________________________
-    """
-        print(header)
-        print("waiting for inbound connexion...")
+        render_success("Destination generated!")
+        time.sleep(0.5)
+        clear_screen()
+        render_dest_display(pub)
+        console.print()
+
+        while True:
+            action = inquirer.select(
+                message="Room Options",
+                choices=[
+                    {"name": "  Start waiting for inbound connection", "value": "listen"},
+                    {"name": "  Generate PGP Signed Invite", "value": "invite"},
+                    {"name": "  Cancel room", "value": "cancel"}
+                ],
+                pointer=">",
+                qmark=">>",
+                style=INQUIRER_STYLE,
+            ).execute()
+
+            if action == "cancel":
+                render_info("Room cancelled.")
+                return
+
+            elif action == "invite":
+                from .invites import export_invite
+                from .keychain import load_register
+
+                try:
+                    if priv_key_obj is None:
+                        render_info("Unlocking private key to sign the invite...")
+                        priv_key_obj = decrypt_private_key(private_path)
+
+                    entries = load_register()
+                    sender_alias = "Host"
+                    for e in entries:
+                        if e["Type"] == "private" and e["Filename"] == private_key_file:
+                            sender_alias = e["Alias"] or "Host"
+                            break
+
+                    export_invite(
+                        sender_priv_key=priv_key_obj,
+                        sender_alias=sender_alias,
+                        sender_fingerprint=priv_key_obj.fingerprint,
+                        recipient_pub_key=pubkey_remote,
+                        dest=pub,
+                        invite_type=room_type
+                    )
+                except Exception as e:
+                    render_error(f"Failed to generate invite: {e}")
+
+            elif action == "listen":
+                break
+
+        render_info("Waiting for inbound connection...")
 
         s2 = sam_hello()
         sam_stream_accept(s2, main_session_id)
-        print(Fore.GREEN + "[CONNECTED] start chatting" + Style.RESET_ALL)
+        render_success("Contact connected! Start chatting")
 
         chat_session(s2, private_path, pubkey_remote)
 
     except Exception as e:
-        print(Fore.RED + f"Error create_room: {e}" + Style.RESET_ALL)
+        render_error(f"Error creating room: {e}")
         import traceback
         traceback.print_exc()
         input()

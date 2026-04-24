@@ -91,7 +91,11 @@ def decrypt_private_key(private_key_path):
     )
 
     aesgcm = AESGCM(key)
-    private_key_bytes = aesgcm.decrypt(nonce, ciphertext, None)
+    try:
+        private_key_bytes = aesgcm.decrypt(nonce, ciphertext, None)
+    except Exception as e:
+        # InvalidTag means wrong password
+        raise Exception("Wrong password or corrupted key file.")
 
     private_key = PGPKey.from_blob(private_key_bytes.decode())[0]
 
